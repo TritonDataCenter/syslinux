@@ -1,0 +1,5 @@
+.toolcheck
+.echocheck
+TAGS*
+bin*
+config-local.h

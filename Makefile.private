@@ -1,0 +1,102 @@
+## -*- makefile -*- ------------------------------------------------------
+##
+##   Copyright 2000-2008 H. Peter Anvin - All Rights Reserved
+##
+##   This program is free software; you can redistribute it and/or modify
+##   it under the terms of the GNU General Public License as published by
+##   the Free Software Foundation, Inc., 53 Temple Place Ste 330,
+##   Boston MA 02111-1307, USA; either version 2 of the License, or
+##   (at your option) any later version; incorporated herein by reference.
+##
+## -----------------------------------------------------------------------
+
+#
+# This should only be used by the maintainer to generate official binaries
+# for release.  Please do not "make official" and distribute the binaries,
+# please.
+#
+.PHONY: official release
+
+# These files are removed when tarballs are generated.
+PRIVATE = Makefile.private mk/devel.mk
+
+GIT_DIR ?= .git
+ABS_GIT_DIR := $(shell cd '$(GIT_DIR)' 2>/dev/null && pwd)
+
+-include release/Makefile.secret
+
+isolinux.iso: all
+	cp isolinux-debug.bin isolinux-test/isolinux/isolinux.bin
+	mkisofs -v -r -J \
+		-b isolinux/isolinux.bin -c isolinux/boot.cat \
+		-no-emul-boot -boot-load-size 4 -boot-info-table \
+		-o isolinux.iso isolinux-test
+
+burn: isolinux.iso
+	cdrecord -v blank=fast isolinux.iso
+
+official:
+	$(MAKE) spotless CC='$(CC) -m32'
+	$(MAKE) all CC='$(CC) -m32'
+	$(MAKE) strip CC='$(CC) -m32'
+	$(MAKE) dist CC='$(CC) -m32'
+
+release:
+	test -d release
+	git tag -a -m syslinux-$(VERSION) -f syslinux-$(VERSION)
+	-rm -rf release/syslinux-$(VERSION)
+	-rm -f release/syslinux-$(VERSION).*
+	mkdir -p release/syslinux-$(VERSION)
+	git archive --format=tar syslinux-$(VERSION) | \
+		tar -x -f - -C release/syslinux-$(VERSION)
+	find release/syslinux-$(VERSION) \
+		\( -name '*~' -or -name '#*' \) -type f -print0 | \
+		xargs -0rt rm -f
+	sed -e 's/@@VERSION@@/$(VERSION)/g' -e 's/@@RPMVERSION@@/$(VERSION)/g' \
+		< release/syslinux-$(VERSION)/syslinux.spec.in \
+		> release/syslinux-$(VERSION)/syslinux.spec
+	rm -f release/syslinux-$(VERSION)/syslinux.spec.in
+	$(MAKE) -C release/syslinux-$(VERSION) official DATE=`date +%Y-%m-%d`
+
+	cd release/syslinux-$(VERSION) && rm -rf $(PRIVATE)
+	cd release && tar cvvf - syslinux-$(VERSION) | \
+		gzip -9 > syslinux-$(VERSION).tar.gz
+	cd release/syslinux-$(VERSION) && \
+		zip -9r ../syslinux-$(VERSION).zip *
+
+
+PRERELDIR := release/syslinux-$(VERSION)-pre
+PRERELNO  := $(shell cat $(PRERELDIR)/.prerel 2>/dev/null || echo 1)
+PREREL    := syslinux-$(VERSION)-pre$(PRERELNO)
+RPMPREREL := $(shell $(PERL) -e 'printf "%.2f.%d\n", $(VERSION)-0.01, $(PRERELNO);')
+
+prerel:
+	test -d release
+	git tag -a -m $(PREREL) -f $(PREREL)
+	-rm -rf $(PRERELDIR)/$(PREREL)
+	-rm -f $(PRERELDIR)/$(PREREL).*
+	mkdir -p $(PRERELDIR)/$(PREREL)
+	git archive --format=tar $(PREREL) | \
+		tar -x -f - -C $(PRERELDIR)/$(PREREL)
+	find $(PRERELDIR)/$(PREREL) \
+		\( -name '*~' -or -name '#*' \) -type f -print0 | \
+		xargs -0rt rm -f
+	sed -e 's/@@VERSION@@/$(VERSION)-pre$(PRERELNO)/g' \
+	    -e 's/@@RPMVERSION@@/$(RPMPREREL)/g' \
+		< $(PRERELDIR)/$(PREREL)/syslinux.spec.in \
+		> $(PRERELDIR)/$(PREREL)/syslinux.spec
+	rm -f $(PRERELDIR)/$(PREREL)/syslinux.spec.in
+	$(MAKE) -C $(PRERELDIR)/$(PREREL) official DATE=`printf '%s-pre%d          ' $(VERSION) $(PRERELNO) | dd bs=10 count=1 2>/dev/null`
+	cd $(PRERELDIR)/$(PREREL) && rm -rf $(PRIVATE)
+	cd $(PRERELDIR) && tar cvvf - $(PREREL) | \
+		gzip -9 > $(PREREL).tar.gz
+	cd $(PRERELDIR)/$(PREREL) && \
+		zip -9r ../$(PREREL).zip *
+	expr $(PRERELNO) + 1 > $(PRERELDIR)/.prerel
+
+LATEST_PRERELNO := $(shell expr $(PRERELNO) - 1)
+LATEST_PREREL   := syslinux-$(VERSION)-pre$(LATEST_PRERELNO)
+
+unprerel:
+	echo $(LATEST_PRERELNO) > $(PRERELDIR)/.prerel
+	@echo Next release will be $(LATEST_PREREL)
